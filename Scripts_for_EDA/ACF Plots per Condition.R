@@ -12,7 +12,7 @@ ggplot(Pos,
        y = "EDA") +
   theme_minimal()
 
-
+#
 # Option A: Remove rows with any NA values
 data_positive_clean <- na.omit(Pos)
 data_negative_clean <- na.omit(neg)
