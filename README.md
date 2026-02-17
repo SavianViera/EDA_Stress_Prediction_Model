@@ -1,4 +1,11 @@
 # EDA Exploration
+
+- `Data`
+  - `raw`:
+      - `participants_combined.csv`: raw data
+      - `.mat`: link
+  - `processed`: `....`: whatever made by `Patients_Window_Interval...`
+  - 
 ## Notes from Chen
 - fpp2 package for R may be useful
 - Add commentary of the ACF plots
