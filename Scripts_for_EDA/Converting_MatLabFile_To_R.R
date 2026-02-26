@@ -24,3 +24,4 @@ head(eda_df[, 1:5])
 colnames(eda_df)
 
 df <- eda_df
+write.csv(df, file = "MatLab_EDA_For_R.csv", row.names = F)
