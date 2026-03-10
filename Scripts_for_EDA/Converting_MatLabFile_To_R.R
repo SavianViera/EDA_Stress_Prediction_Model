@@ -1,7 +1,7 @@
 #install.packages("R.matlab")
 library(R.matlab)
 
-data <- readMat("Data/eda_5m32s_23ptcp_shift.mat")
+data <- readMat("../Data/Raw/eda_5m32s_23ptcp_shift.mat")
 str(data)
 
 inner <- data$eda.5m32s.23ptcp.shift
