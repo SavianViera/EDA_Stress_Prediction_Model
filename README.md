@@ -8,10 +8,13 @@
       - `Window_10_No_Overlap.csv`: made by `Function_For_Window_And_Overlap_Dataframe.R` 10 seconds of data per patient with no overlap on conditions
       - `MatLab_EDA_For_R.csv` made by `Converting_MatLabFile_To_R` to make the `eda_5m32s_23ptcp_shift.mat` file usable in R
 
-- `Scripts_for_EDA`
-  - `Converting_MatLabFile_To_R`: processes `eda_5m32s_23ptcp_shift.mat` into a data-frame readable in R
-  - `Function_For_Window_And_Overlap_Dataframe.R` takes the `eda_5m32s_23ptcp_shift.mat` data-frame and transforms it into a long data-frame with definable window of time per patient and user definable sensitivity on overlapping emotional states. 
-
+- `Scripts`
+  - `Python_Scripts`:
+    - `Machine_Learning_EDA_Stimulated_or_Not_Stimulated.ipynb`: test run exploring feature importance and baseline prediction without tuning boosting
+  - `R_Scripts`:
+        -`Scripts_for_EDA`:
+          - `Converting_MatLabFile_To_R`: processes `eda_5m32s_23ptcp_shift.mat` into a data-frame readable in R
+          - `Function_For_Window_And_Overlap_Dataframe.R` takes the `eda_5m32s_23ptcp_shift.mat` data-frame and transforms it into a long data-frame with definable window of time per patient and user definable sensitivity on overlapping emotional states. 
   
 ## Notes from Chen
 - fpp2 package for R may be useful
