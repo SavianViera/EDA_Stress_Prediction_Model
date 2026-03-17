@@ -15,7 +15,7 @@
         -`Scripts_for_EDA`:
           - `Converting_MatLabFile_To_R`: processes `eda_5m32s_23ptcp_shift.mat` into a data-frame readable in R
           - `Function_For_Window_And_Overlap_Dataframe.R` takes the `eda_5m32s_23ptcp_shift.mat` data-frame and transforms it into a long data-frame with definable window of time per patient and user definable sensitivity on overlapping emotional states. 
-  
+          - `Feature_Engineering_10_Window_Dataset.R` examines descriptive features of the signals for the 10 window no overlap dataset
 ## Notes from Chen
 - fpp2 package for R may be useful
 - Add commentary of the ACF plots
