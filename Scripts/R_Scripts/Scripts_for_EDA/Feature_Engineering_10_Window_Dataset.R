@@ -1,12 +1,14 @@
 df <- read.csv("Data/Processed/Window_10_No_Overlap.csv")
-install.packages("moments")
+#install.packages("moments")
 library(moments)
-df$Max <- apply(df[2:40], MARGIN = 1, FUN = max, na.rm=TRUE)
-df$Min <- apply(df[2:40], MARGIN = 1, FUN = min, na.rm=TRUE)
-df$std <- apply(df[2:40], MARGIN = 1, FUN = sd, na.rm=TRUE)
-df$kurtosis <- apply(df[2:40], MARGIN = 1, FUN = kurtosis, na.rm=TRUE)
-df$skewness <- apply(df[2:40], MARGIN = 1, FUN = skewness, na.rm=TRUE)
-df$mean <- apply(df[2:40], MARGIN = 1, FUN = mean, na.rm=TRUE)
+df$Max_raw <- apply(df[2:41], MARGIN = 1, FUN = max, na.rm=TRUE)
+df$Min_raw <- apply(df[2:41], MARGIN = 1, FUN = min, na.rm=TRUE)
+df$std_raw <- apply(df[2:41], MARGIN = 1, FUN = sd, na.rm=TRUE)
+df$kurtosis_raw <- apply(df[2:41], MARGIN = 1, FUN = kurtosis, na.rm=TRUE)
+df$skewness_raw <- apply(df[2:41], MARGIN = 1, FUN = skewness, na.rm=TRUE)
+df$mean_raw <- apply(df[2:41], MARGIN = 1, FUN = mean, na.rm=TRUE)
+
+write.csv(df, "Raw_Features.csv")
 
 library(ggplot2)
 ggplot(df, aes(x = condition, y = Max, fill = condition)) +
