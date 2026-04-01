@@ -7,10 +7,17 @@
   - `processed`: 
       - `Window_10_No_Overlap.csv`: made by `Function_For_Window_And_Overlap_Dataframe.R` 10 seconds of data per patient with no overlap on conditions
       - `MatLab_EDA_For_R.csv` made by `Converting_MatLabFile_To_R` to make the `eda_5m32s_23ptcp_shift.mat` file usable in R
+      - `CVX_Phasic.csv` is the raw phasic signal for each patient using the cvxEDA package in Python
+      - `CVX_Tonic.csv` is the raw tonic signal for each patient using the cvxEDA package in Python
+      - `Phasic_Reshaped.csv` is the window converted phasic signal for each patient using the cvxEDA package in Python
+      - `Tonic_Rehaped.csv` is the window converted tonic signal for each patient using the cvxEDA package in Python
+      - `Final_Result_All_Signals_Combined.csv` is a concatenation of all the signals with phasic, tonic, and raw for the specified window
 
 - `Scripts`
   - `Python_Scripts`:
     - `Machine_Learning_EDA_Stimulated_or_Not_Stimulated.ipynb`: test run exploring feature importance and baseline prediction without tuning boosting
+    - `cvxEDA.ipnyb` is a jupyter notebook which contains the cvxEDA package applied and phasic and tonic datasets for cvxEDA creation
+    - `cvxEDA_Machine_Learning_EDA_Stimulated_or_Not_Stimulated.ipynb` is a test run to explore feature important and baseline prediction without tuning with the tonic and phasic signals generated from cvxEDA
   - `R_Scripts`:
         -`Scripts_for_EDA`:
           - `Converting_MatLabFile_To_R`: processes `eda_5m32s_23ptcp_shift.mat` into a data-frame readable in R
