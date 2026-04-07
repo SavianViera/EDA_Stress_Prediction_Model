@@ -16,7 +16,7 @@
 - `Scripts`
   - `Python_Scripts`:
     - `Machine_Learning_EDA_Stimulated_or_Not_Stimulated.ipynb`: test run exploring feature importance and baseline prediction without tuning boosting
-    - `cvxEDA.ipnyb` is a jupyter notebook which contains the cvxEDA package applied and phasic and tonic datasets for cvxEDA creation
+    - `01cvxEDA.ipnyb` is a jupyter notebook which contains the cvxEDA package applied and phasic and tonic datasets for cvxEDA creation
     - `cvxEDA_Machine_Learning_EDA_Stimulated_or_Not_Stimulated.ipynb` is a test run to explore feature important and baseline prediction without tuning with the tonic and phasic signals generated from cvxEDA
   - `R_Scripts`:
         -`Scripts_for_EDA`:
