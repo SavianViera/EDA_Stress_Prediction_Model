@@ -11,32 +11,32 @@ df$mean_raw <- apply(df[2:41], MARGIN = 1, FUN = mean, na.rm=TRUE)
 write.csv(df, "Raw_Features.csv")
 
 library(ggplot2)
-ggplot(df, aes(x = condition, y = Max, fill = condition)) +
+ggplot(df, aes(x = condition, y = Max_raw, fill = condition)) +
   geom_boxplot() +
   labs(Title = "Spread of Max values for Each Condition")
 
-ggplot(df, aes(x = condition, y = Min, fill = condition)) +
+ggplot(df, aes(x = condition, y = Min_raw, fill = condition)) +
   geom_boxplot() +
   labs(Title = "Spread of Min values for Each Condition")
 
-ggplot(df, aes(x = condition, y = std, fill = condition)) +
+ggplot(df, aes(x = condition, y = std_raw, fill = condition)) +
   geom_boxplot() +
   labs(Title = "Spread of Standard Deviation values for Each Condition")
 
-ggplot(df, aes(x = condition, y = kurtosis, fill = condition)) +
+ggplot(df, aes(x = condition, y = kurtosis_raw, fill = condition)) +
   geom_boxplot() +
   labs(Title = "Spread of Kurtosis values for Each Condition")
 
-ggplot(df, aes(x = condition, y = skewness, fill = condition)) +
+ggplot(df, aes(x = condition, y = skewness_raw, fill = condition)) +
   geom_boxplot() +
   labs(Title = "Spread of Skewness values for Each Condition")
 
-ggplot(df, aes(x = condition, y = mean, fill = condition)) +
+ggplot(df, aes(x = condition, y = mean_raw, fill = condition)) +
   geom_boxplot() +
   labs(Title = "Spread of mean values for Each Condition")
 library(nnet)
 #Multinomial logistic regression
-model <- multinom(condition ~ Max + Min + skewness + kurtosis + mean + std, data=df)
+model <- multinom(condition ~ Max_raw + Min_raw + skewness_raw + kurtosis_raw + mean_raw + std_raw, data=df)
 #log-odds
 z <- summary(model)$coefficients/summary(model)$standard.errors
 z
