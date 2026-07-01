@@ -1,12 +1,22 @@
-df <- read.csv("Data/Processed/MatLab_EDA_For_R.csv")
+# 2nd r script
+# some room for window_size and overlap
+current_path <- rstudioapi::getActiveDocumentContext()$path
+current_path = dirname(current_path)
+setwd(current_path)
+df <- read.csv("../../Data/Processed/MatLab_EDA_For_R.csv")
 
 # Function to assign condition based on row index
+markers = c(60, # end of n
+            2*60+15, # end of b
+            3*60+15, # end of p
+            4*60+29, # end of b
+            5*60+26)*4
 assign_condition_by_row <- function(row_index) {
-  if (row_index >= 1 && row_index <= 239) return("neutral")
-  if (row_index >= 240 && row_index <= 539) return("black")
-  if (row_index >= 540 && row_index <= 779) return("positive")
-  if (row_index >= 780 && row_index <= 1075) return("black")
-  if (row_index >= 1076 && row_index <= 1300) return("negative")
+  if (row_index >= 1+240 && row_index <= markers[1]-1+240) return("neutral")
+  if (row_index >= markers[1]+240 && row_index <= markers[2]-1+240) return("black")
+  if (row_index >= markers[2]+240 && row_index <= markers[3]-1+240) return("positive")
+  if (row_index >= markers[3]+240 && row_index <= markers[4]-1+240) return("black")
+  if (row_index >= markers[4]+240 ) return("negative")
   return(NA)  # Or "rest" if you prefer
 }
 
@@ -113,7 +123,7 @@ reshape_by_condition <- function(df, window_size = 10, overlap = 0) {
 # Default: window = 10, no overlap
 result <- reshape_by_condition(df)
 
-write.csv(result, file = "Window_10_No_Overlap.csv", row.names = TRUE)
+write.csv(result, file = "../../Data/Processed/Window_10_No_Overlap.csv", row.names = TRUE)
 
 # Window of 20, no overlap
 result <- reshape_by_condition(df, window_size = 20)

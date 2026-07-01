@@ -1,14 +1,22 @@
-df <- read.csv("Data/Processed/Window_10_No_Overlap.csv")
+# 3rd r script
+# generate raw features
+current_path <- rstudioapi::getActiveDocumentContext()$path
+current_path = dirname(current_path)
+setwd(current_path)
+df <- read.csv("../../Data/Processed/Window_10_No_Overlap.csv")
 #install.packages("moments")
 library(moments)
-df$Max_raw <- apply(df[2:41], MARGIN = 1, FUN = max, na.rm=TRUE)
-df$Min_raw <- apply(df[2:41], MARGIN = 1, FUN = min, na.rm=TRUE)
-df$std_raw <- apply(df[2:41], MARGIN = 1, FUN = sd, na.rm=TRUE)
-df$kurtosis_raw <- apply(df[2:41], MARGIN = 1, FUN = kurtosis, na.rm=TRUE)
-df$skewness_raw <- apply(df[2:41], MARGIN = 1, FUN = skewness, na.rm=TRUE)
-df$mean_raw <- apply(df[2:41], MARGIN = 1, FUN = mean, na.rm=TRUE)
+window_size <- 10
+fq <- 4
 
-write.csv(df, "Raw_Features.csv")
+df$Max_raw <- apply(df[2:(window_size*fq - 1)], MARGIN = 1, FUN = max, na.rm=TRUE)
+df$Min_raw <- apply(df[2:(window_size*fq - 1)], MARGIN = 1, FUN = min, na.rm=TRUE)
+df$std_raw <- apply(df[2:(window_size*fq - 1)], MARGIN = 1, FUN = sd, na.rm=TRUE)
+df$kurtosis_raw <- apply(df[2:(window_size*fq - 1)], MARGIN = 1, FUN = kurtosis, na.rm=TRUE)
+df$skewness_raw <- apply(df[2:(window_size*fq - 1)], MARGIN = 1, FUN = skewness, na.rm=TRUE)
+df$mean_raw <- apply(df[2:(window_size*fq - 1)], MARGIN = 1, FUN = mean, na.rm=TRUE)
+
+write.csv(df, "../../Data/Processed/Raw_Features.csv")
 
 library(ggplot2)
 ggplot(df, aes(x = condition, y = Max_raw, fill = condition)) +

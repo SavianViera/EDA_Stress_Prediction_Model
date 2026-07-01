@@ -1,7 +1,11 @@
 #install.packages("R.matlab")
 library(R.matlab)
+library(rstudioapi)
+current_path <- rstudioapi::getActiveDocumentContext()$path
+current_path = dirname(current_path)
+setwd(current_path)
 
-data <- readMat("../Data/Raw/eda_5m32s_23ptcp_shift.mat")
+data <- readMat("../../Data/Raw/eda_5m32s_23ptcp_shift.mat")
 str(data)
 
 inner <- data$eda.5m32s.23ptcp.shift
