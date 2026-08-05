@@ -1,3 +1,6 @@
+# Project Journal
+- 8/5/26: the model was learning to classify the trials, not the emotions?
+- 
 # EDA Exploration
 
 - `Data`
