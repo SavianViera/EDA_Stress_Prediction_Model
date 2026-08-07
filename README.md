@@ -1,6 +1,7 @@
 # Project Journal
 - 8/5/26: the model was learning to classify the trials, not the emotions?
-- 
+- 8/7/26: recreated the encoder/decoder and loss function from Birkenmaier (testing accuracy with 5 fold CV currently at 84%)
+
 # EDA Exploration
 
 - `Data`
