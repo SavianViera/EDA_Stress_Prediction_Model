@@ -5,9 +5,9 @@
   - Initial accuracy on binary valence is 84%
   - Increased window size to 60s and increased to 87.2%
   - tasks to do (unordered):
-    - artifact smoothing
+    - ~~artifact smoothing~~ Second: Implemented accuracy increase to 87.8%, when removing S17 accuracy is 91%, unsure of issue with participant, will analyze
     - cvxeda parameter tuning
-    - switch from k-fold to loocv
+    - ~~switch from k-fold to loocv~~ First: Completed, accuracy stayed stable at approximately 87% accuracy, though notably struggled with S17
     - updated lambda parameter search for 60s windows
     - machine learning parameter search 
 
