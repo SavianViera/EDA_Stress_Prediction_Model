@@ -1,6 +1,15 @@
 # Project Journal
 - 8/5/26: the model was learning to classify the trials, not the emotions?
 - 8/7/26: recreated the encoder/decoder and loss function from Birkenmaier (testing accuracy with 5 fold CV currently at 84%)
+  - Implemented feature design and optimized the loss function with a parameter grid search
+  - Initial accuracy on binary valence is 84%
+  - Increased window size to 60s and increased to 87.2%
+  - tasks to do (unordered):
+    - artifact smoothing
+    - cvxeda parameter tuning
+    - switch from k-fold to loocv
+    - updated lambda parameter search for 60s windows
+    - machine learning parameter search 
 
 # EDA Exploration
 
