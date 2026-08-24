@@ -10,6 +10,7 @@
     - ~~switch from k-fold to loocv~~ First: Completed, accuracy stayed stable at approximately 87% accuracy, though notably struggled with S17
     - updated lambda parameter search for 60s windows
     - machine learning parameter search 
+-
 
 # EDA Exploration
 
