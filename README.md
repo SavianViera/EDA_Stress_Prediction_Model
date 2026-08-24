@@ -19,6 +19,7 @@
       - `eda_5m32s_23ptcp_shift.mat`: raw data updated to correct start point
   - `processed`: 
       - `Window_10_No_Overlap.csv`: made by `Function_For_Window_And_Overlap_Dataframe.R` 10 seconds of data per patient with no overlap on conditions
+  - 
       - `MatLab_EDA_For_R.csv` made by `Converting_MatLabFile_To_R` to make the `eda_5m32s_23ptcp_shift.mat` file usable in R
       - `CVX_Phasic.csv` is the raw phasic signal for each patient using the cvxEDA package in Python
       - `CVX_Tonic.csv` is the raw tonic signal for each patient using the cvxEDA package in Python
@@ -31,6 +32,11 @@
     - `Machine_Learning_EDA_Stimulated_or_Not_Stimulated.ipynb`: test run exploring feature importance and baseline prediction without tuning boosting
     - `01cvxEDA.ipnyb` is a jupyter notebook which contains the cvxEDA package applied and phasic and tonic datasets for cvxEDA creation
     - `cvxEDA_Machine_Learning_EDA_Stimulated_or_Not_Stimulated.ipynb` is a test run to explore feature important and baseline prediction without tuning with the tonic and phasic signals generated from cvxEDA
+    - eda_artifact_detection.py is to remove noise from the data by categorizing true SCR signals with MAD (Median Absolute Deviation) and linear interpolation for continuity, I also implemented as high-pass filter here as well.
+    - eda_supervised_autoencoder.py is the supervised autoencoder for a CNN, we use the encoder and decoder to predict the ability to recreate the signal and use the weights from this model as features for the full model, has a custom loss function which makes it "supervised" that weights the loss function with a classification for higher accuracy
+    - eda_statistical_features.py creates the tabular data for added accuracy
+    - eda_hybrid_pipeline.py serves to do grid search optimization of models with a k-fold pipeline
+    - eda_loso_pipeline.py is the final step in the script pipeline and is loso cross validation for most stable accuracy results and also informs which participants are difficult to classify
   - `R_Scripts`:
         -`Scripts_for_EDA`:
           - `Converting_MatLabFile_To_R`: processes `eda_5m32s_23ptcp_shift.mat` into a data-frame readable in R
