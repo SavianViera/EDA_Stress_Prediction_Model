@@ -8,5 +8,6 @@ In "python_code" folder
 
 ## Data
 - WESAD data should be placed here
-  # wesad_eda
+  ### wesad_eda
   - `wesad_subject_list` is a list of dataframes for each participant's EDA signal and labels
+  - `filtered_eda_signals.csv` is the concatenated filtered and normalized lists of EDA signals
