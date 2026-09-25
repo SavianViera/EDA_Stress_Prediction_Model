@@ -20,3 +20,4 @@ In "Python_code" folder
 - [`tonic_signal.csv`](Data/wesad_eda/tonic_signal.csv) is the tonic decomposition of EDA signals
 - [`feature_dataframe.csv`](Data/wesad_eda/feature_dataframe.csv) is the statistical feature dataframe for the tonic and phasic descriptives
 
+
