@@ -180,7 +180,8 @@ def prox_l1_nonneg_linear(H, c, lam, rho, X0=None,
     ones = np.ones((p, n))
 
     for _ in range(max_iters):
-        grad = rho * (Ht @ (H @ Y - c)) + lam * ones
+        #grad = rho * (Ht @ (H @ Y - c)) + lam * ones
+        grad = rho * (HtH @ Y - Ht @ c) + lam * ones
         X_new = project_nonneg(Y - step * grad)
 
         t_new = (1 + np.sqrt(1 + 4 * t ** 2)) / 2
@@ -260,9 +261,9 @@ def prox_nuclear_nonneg_pg(b, tau, iters=100, step=0.5, accelerate=True,
 # Outer ADMM
 # --------------------------------------------------------------------------
 
-def admm_nn_separation(H, M, lam, rho=1.0, max_iters=500,
+def admm_nn_separation(H, M, lam, rho=1.0, max_iters=200,
                         tol_pri=1e-6, tol_dual=1e-6,
-                        x_inner_iters=200, l_inner_iters=50,
+                        x_inner_iters=50, l_inner_iters=50,
                         l_method="admm", l_pg_step=0.5,
                         verbose=False):
     """
@@ -381,18 +382,6 @@ def nn_gmsEDA(signal, fs, num_of_chops, overlap, lmethod = 'pg'):
     tau2 = 0.75
     H = make_H(N, fs, tau1, tau2, 'tril')
 
-    # decompose via GMS-P
-    para = {
-        'rho_outer': 1,
-        'lasso_rho': 1,
-        'max_iter': 100,
-        'lasso_max_iter': 50,
-        'tol_outer': 1e-8,
-        'lasso_tol': 1e-5,
-        'lasso_decomp': 'svd',
-        'lasso_method': 'FISTA',
-    }
-
     lam = 1 / np.sqrt(max(N, K)) * 5
 
     X_hat, L_hat, hist = admm_nn_separation(H, Y, lam, rho=1.0,
@@ -405,6 +394,48 @@ def nn_gmsEDA(signal, fs, num_of_chops, overlap, lmethod = 'pg'):
     baseline = reconstr_data(L_hat, signal.shape, num_of_chops, overlap)
 
     return X, baseline
+
+def nn_gmsEDA_con(signal, fs, num_of_chops, overlap, lmethod = 'pg', lam_scale = 5):
+    """
+    Same as nn_gmsEDA but with the preconditioned (C H) formulation.
+    lam_scale : sparsity weight factor, lam = lam_scale / sqrt(max(N, K)).
+                Default 5 reproduces the previous hard-coded value.
+    """
+    signal = np.array(signal)
+    if signal.ndim == 1:
+        signal = signal.reshape([-1,1])
+
+    Y = chop_data(signal, num_of_chops, overlap)
+    N, K = Y.shape  # N is new signal length after chopping
+
+    # parameter for generating filter matrix H
+    tau1 = 2
+    tau2 = 0.75
+    H = make_H(N, fs, tau1, tau2, 'tril')
+
+    u, s, vh = np.linalg.svd(H, full_matrices=True)
+    v = vh.T
+    k = np.linalg.matrix_rank(H)
+ 
+    uk = u[:, :k]          # m x k
+    vk = v[:, :k]          # p x k
+    s = s[:k]              # singular values as a vector
+    s_inv = 1.0 / s
+ 
+    C = uk @ np.diag(s_inv) @ uk.T
+    CH = uk @ vk.T
+
+    lam = 1 / np.sqrt(max(N, K)) * lam_scale
+    
+    X_hat, Y_hat, hist = admm_nn_separation(CH, C@Y, lam, rho=1.0,
+                                            max_iters=200,
+                                            tol_pri=1e-6, tol_dual=1e-6,
+                                            l_method=lmethod,
+                                            verbose=False)
+    L_hat = Y - H@X_hat
+    X = reconstr_data(X_hat, signal.shape, num_of_chops, overlap)
+    L = reconstr_data(L_hat, signal.shape, num_of_chops, overlap)
+    return X, L
 
 # ---------------------------------------------------------------------------
 # Chopping / reconstruction
