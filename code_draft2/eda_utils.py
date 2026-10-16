@@ -418,3 +418,434 @@ def grid_tags(cache_dir=None):
         m = re.match(r"c(\d+)_o([\d.]+)_l([\d.]+)_nn(\d)", t)
         rows.append(dict(tag=t, num_of_chops=int(m[1]), overlap=float(m[2]), lam_scale=float(m[3]), force_nn=int(m[4])))
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# NeuroKit2 eda_phasic re-implementation (used only when neurokit2 is not installed)
+# ---------------------------------------------------------------------------
+def nk_eda_phasic(signal, sampling_rate=FS, method="highpass"):
+    """Line-for-line copy of neurokit2.eda_phasic for method='highpass' (NeuroKit2's default) and 'smoothmedian'.
+
+    highpass:     signal_filter(..., method="butter", order=2) -> scipy butter(2, 0.05, sos) + sosfiltfilt;
+                  phasic = high-pass at 0.05 Hz, tonic = low-pass at 0.05 Hz.
+    smoothmedian: tonic = scipy.signal.medfilt(signal, 4*fs, made odd), phasic = signal - tonic.
+    Returns (tonic, phasic).
+    """
+    x = np.asarray(signal, float)
+    if method in ("highpass", "neurokit", "biopac", "acqknowledge"):
+        hp = sps.butter(2, 0.05, btype="highpass", output="sos", fs=sampling_rate)
+        lp = sps.butter(2, 0.05, btype="lowpass", output="sos", fs=sampling_rate)
+        return sps.sosfiltfilt(lp, x), sps.sosfiltfilt(hp, x)
+    if method in ("smoothmedian", "median"):
+        size = int(4 * sampling_rate)
+        if size % 2 == 0:
+            size += 1
+        tonic = sps.medfilt(x, kernel_size=size)
+        return tonic, x - tonic
+    raise ValueError(method)
+
+
+# ---------------------------------------------------------------------------
+# sparsEDA (Hernando-Gallego et al., 2018) — copy of neurokit2's _eda_phasic_sparsEDA
+# (neurokit2/eda/eda_phasic.py, MIT licence; credits there to github.com/fhernandogallego/sparsEDA and
+# github.com/yskong224/SparsEDA-python). Only change: the sparse driver, which neurokit2 computes but
+# discards, is also returned (resampled to the input rate) so it can be used for features like gmsEDA's.
+# ---------------------------------------------------------------------------
+def _nk_signal_resample(signal, desired_length=(), sampling_rate=None, desired_sampling_rate=None):
+    """neurokit2.signal_resample with its default method='interpolation' (scipy.ndimage.zoom)."""
+    import scipy.ndimage
+    if desired_length == ():  # noqa: F632
+        desired_length = int(np.round(len(signal) * desired_sampling_rate / sampling_rate))
+    if len(signal) == desired_length:
+        return signal
+    return scipy.ndimage.zoom(signal, desired_length / len(signal))
+
+
+def sparsEDA(eda_signal, sampling_rate=FS, epsilon=0.0001, Kmax=40, Nmin=5 / 4, rho=0.025, return_driver=True):
+    """Returns (SCL = tonic, SCR = phasic[, driver]) exactly as neurokit2.eda_phasic(method='sparsEDA'),
+    plus the post-processed sparse driver."""
+    import scipy.linalg
+    eda_signal = np.asarray(eda_signal, float)
+    dmin = Nmin * sampling_rate
+    original_length = len(eda_signal)
+    if np.sum(np.isnan(eda_signal)) > 0:
+        raise AssertionError("Signal contains NaN")
+
+    eda_signal = _nk_signal_resample(eda_signal, sampling_rate=sampling_rate, desired_sampling_rate=8)
+    new_sr = 8
+
+    signalAdd = np.zeros(len(eda_signal) + (20 * new_sr) + (60 * new_sr))
+    signalAdd[0: 20 * new_sr] = eda_signal[0]
+    signalAdd[20 * new_sr: 20 * new_sr + len(eda_signal)] = eda_signal
+    signalAdd[20 * new_sr + len(eda_signal):] = eda_signal[-1]
+
+    Nss = len(eda_signal)
+    Ns = len(signalAdd)
+    b0 = 0
+    pointerS = 20 * new_sr
+    pointerE = pointerS + Nss
+
+    durationR = 70
+    Lreg = int(20 * new_sr * 3)
+    L = 10 * new_sr
+    N = durationR * new_sr
+    T = 6
+
+    Rzeros = np.zeros([N + L, Lreg * 5])
+    srF = new_sr * np.array([0.5, 0.75, 1, 1.25, 1.5])
+    for j in range(0, len(srF)):
+        t_rf = np.arange(0, 10 + 1e-10, 1 / srF[j])
+        taus = np.array([0.5, 2, 1])
+        rf_biexp = np.exp(-t_rf / taus[1]) - np.exp(-t_rf / taus[0])
+        rf_est = taus[2] * rf_biexp
+        rf_est = rf_est / np.sqrt(np.sum(rf_est ** 2))
+        rf_est_zeropad = np.zeros(len(rf_est) + (N - len(rf_est)))
+        rf_est_zeropad[: len(rf_est)] = rf_est
+        Rzeros[0:N, j * Lreg: (j + 1) * Lreg] = scipy.linalg.toeplitz(rf_est_zeropad, np.zeros(Lreg))
+
+    R0 = Rzeros[0:N, 0: 5 * Lreg]
+    R = np.zeros([N, T + Lreg * 5])
+    R[0:N, T:] = R0
+    R[0:Lreg, 0] = np.linspace(0, 1, Lreg)
+    R[0:Lreg, 1] = -np.linspace(0, 1, Lreg)
+    R[int(Lreg / 3): Lreg, 2] = np.linspace(0, 2 / 3, int((2 * Lreg) / 3))
+    R[int(Lreg / 3): Lreg, 3] = -np.linspace(0, 2 / 3, int((2 * Lreg) / 3))
+    R[int(2 * Lreg / 3): Lreg, 4] = np.linspace(0, 1 / 3, int(Lreg / 3))
+    R[int(2 * Lreg / 3): Lreg, 5] = -np.linspace(0, 1 / 3, int(Lreg / 3))
+    Cte = np.sum(R[:, 0] ** 2)
+    R[:, 0:6] = R[:, 0:6] / np.sqrt(Cte)
+
+    cutS = 0
+    cutE = N
+    slcAux = np.zeros(Ns)
+    driverAux = np.zeros(Ns)
+    resAux = np.zeros(Ns)
+    while cutE < Ns:
+        signalCut = signalAdd[cutS:cutE]
+        if b0 == 0:
+            b0 = signalCut[0]
+        signalCutIn = signalCut - b0
+        beta, _, _, _, _, _ = _sparsEDA_lasso(R, signalCutIn, new_sr, Kmax, epsilon)
+        signalEst = (np.matmul(R, beta) + b0).reshape(-1)
+        remAout = (signalCut - signalEst) ** 2
+        res2 = np.sum(remAout[20 * new_sr: 40 * new_sr])
+        res3 = np.sum(remAout[40 * new_sr: 60 * new_sr])
+        jump = 1
+        if res2 < 1:
+            jump = 2
+            if res3 < 1:
+                jump = 3
+        SCL = np.matmul(R[:, 0:6], beta[0:6, :]) + b0
+        SCRline = beta[6:, :]
+        SCRaux = np.zeros([Lreg, 5])
+        SCRaux[:] = SCRline.reshape([5, Lreg]).transpose()
+        driver = SCRaux.sum(axis=1)
+        b0 = np.matmul(R[jump * 20 * new_sr - 1, 0:6], beta[0:6, :]) + b0
+        driverAux[cutS: cutS + (jump * 20 * new_sr)] = driver[0: jump * new_sr * 20]
+        slcAux[cutS: cutS + (jump * 20 * new_sr)] = SCL[0: jump * new_sr * 20].reshape(-1)
+        resAux[cutS: cutS + (jump * 20 * new_sr)] = remAout[0: jump * new_sr * 20]
+        cutS = cutS + jump * 20 * new_sr
+        cutE = cutS + N
+
+    SCRaux = driverAux[pointerS:pointerE]
+    SCL = slcAux[pointerS:pointerE]
+
+    # post-processing of the driver (kept from neurokit2; there the result is not returned)
+    driver = np.zeros(len(SCRaux))
+    ind = np.argwhere(SCRaux > 0).reshape(-1)
+    if len(ind) > 0:
+        scr_temp = SCRaux[ind]
+        ind2 = np.argsort(scr_temp)[::-1]
+        scr_ord = scr_temp[ind2]
+        scr_fin = [scr_ord[0]]
+        ind_fin = [ind[ind2[0]]]
+        for i in range(1, len(ind2)):
+            if np.all(np.abs(ind[ind2[i]] - ind_fin) >= dmin):
+                scr_fin.append(scr_ord[i])
+                ind_fin.append(ind[ind2[i]])
+        driver[np.array(ind_fin)] = np.array(scr_fin)
+        driver[driver < rho * scr_fin[0]] = 0
+
+    SCR = eda_signal - SCL
+    SCR = _nk_signal_resample(SCR, desired_length=original_length)
+    SCL = _nk_signal_resample(SCL, desired_length=original_length)
+    if not return_driver:
+        return SCL, SCR
+    # driver: 8 Hz impulses -> input rate by summing the impulses that fall into each input sample
+    pos = np.minimum((np.arange(len(driver)) * original_length / len(driver)).astype(int), original_length - 1)
+    drv = np.zeros(original_length)
+    np.add.at(drv, pos, driver)
+    return SCL, SCR, drv
+
+
+def _sparsEDA_lasso(R, s, sampling_rate, maxIters, epsilon):
+    """neurokit2 eda_phasic.lasso (non-negative LARS used by sparsEDA), copied verbatim."""
+    import scipy.linalg
+    N = len(s)
+    W = R.shape[1]
+    OptTol = -10
+    solFreq = 0
+    resStop2 = 0.0005
+    lmbdaStop = 0
+    zeroTol = 1e-5
+    x = np.zeros(W)
+    x_old = np.zeros(W)
+    iter = 0
+    c = np.matmul(R.transpose(), s.reshape(-1, 1)).reshape(-1)
+    lmbda = np.max(c)
+    if lmbda < 0:
+        raise Exception("y is not expressible as a non-negative linear combination of the columns of X")
+    newIndices = np.argwhere(np.abs(c - lmbda) < zeroTol).flatten()
+    collinearIndices = []
+    beta = []
+    duals = []
+    res = s
+    R_I = []
+    activeSet = []
+    for j in range(0, len(newIndices)):
+        iter = iter + 1
+        R_I, flag = _sparsEDA_updateChol(R_I, N, W, R, 1, activeSet, newIndices[j], zeroTol)
+        activeSet.append(newIndices[j])
+    activationHist = activeSet.copy()
+
+    done = 0
+    while done == 0:
+        if len(activationHist) == 4:
+            lmbda = np.max(c)
+            newIndices = np.argwhere(np.abs(c - lmbda) < zeroTol).flatten()
+            activeSet = []
+            for j in range(0, len(newIndices)):
+                iter = iter + 1
+                R_I, flag = _sparsEDA_updateChol(R_I, N, W, R, 1, activeSet, newIndices[j], zeroTol)
+                activeSet.append(newIndices[j])
+            [activationHist.append(ele) for ele in activeSet]
+        else:
+            lmbda = c[activeSet[0]]
+
+        dx = np.zeros(W)
+        if len(np.array([R_I]).flatten()) == 1:
+            z = scipy.linalg.solve(R_I.reshape([-1, 1]), np.sign(c[np.array(activeSet).flatten()].reshape(-1, 1)),
+                                   transposed=True, lower=False)
+        else:
+            z = scipy.linalg.solve(R_I, np.sign(c[np.array(activeSet).flatten()].reshape(-1, 1)),
+                                   transposed=True, lower=False)
+        if len(np.array([R_I]).flatten()) == 1:
+            dx[np.array(activeSet).flatten()] = scipy.linalg.solve(R_I.reshape([-1, 1]), z, transposed=False, lower=False)
+        else:
+            dx[np.array(activeSet).flatten()] = scipy.linalg.solve(R_I, z, transposed=False, lower=False).flatten()
+
+        v = np.matmul(R[:, np.array(activeSet).flatten()], dx[np.array(activeSet).flatten()].reshape(-1, 1))
+        ATv = np.matmul(R.transpose(), v).flatten()
+        gammaI = np.inf
+        removeIndices = []
+        inactiveSet = np.arange(0, W)
+        if len(np.array(activeSet).flatten()) > 0:
+            inactiveSet[np.array(activeSet).flatten()] = -1
+        if len(np.array(collinearIndices).flatten()) > 0:
+            inactiveSet[np.array(collinearIndices).flatten()] = -1
+        inactiveSet = np.argwhere(inactiveSet >= 0).flatten()
+        if len(inactiveSet) == 0:
+            gammaIc = 1
+            newIndices = []
+        else:
+            epsilon = 1e-12
+            gammaArr = (lmbda - c[inactiveSet]) / (1 - ATv[inactiveSet] + epsilon)
+            gammaArr[gammaArr < zeroTol] = np.inf
+            gammaIc = np.min(gammaArr)
+            newIndices = inactiveSet[(np.abs(gammaArr - gammaIc) < zeroTol)]
+        gammaMin = min(gammaIc, gammaI)
+        x = x + gammaMin * dx
+        res = res - gammaMin * v.flatten()
+        c = c - gammaMin * ATv
+        if (((lmbda - gammaMin) < OptTol) or ((lmbdaStop > 0) and (lmbda <= lmbdaStop))
+                or ((epsilon > 0) and (np.linalg.norm(res) <= epsilon))):
+            newIndices = []
+            removeIndices = []
+            done = 1
+        if np.linalg.norm(res[0: sampling_rate * 20]) <= resStop2:
+            done = 1
+        if gammaIc <= gammaI and len(newIndices) > 0:
+            for j in range(0, len(newIndices)):
+                iter = iter + 1
+                R_I, flag = _sparsEDA_updateChol(R_I, N, W, R, 1, np.array(activeSet).flatten(), newIndices[j], zeroTol)
+                if flag:
+                    collinearIndices.append(newIndices[j])
+                else:
+                    activeSet.append(newIndices[j])
+                    activationHist.append(newIndices[j])
+        if iter >= maxIters:
+            done = 1
+        if len(np.argwhere(x < 0).flatten()) > 0:
+            x = x_old.copy()
+            done = 1
+        else:
+            x_old = x.copy()
+        if done or ((solFreq > 0) and not (iter % solFreq)):
+            beta.append(x)
+            duals.append(v)
+    return np.array(beta).reshape(-1, 1), iter, activationHist, duals, lmbda, res
+
+
+def _sparsEDA_updateChol(R_I, n, N, R, explicitA, activeSet, newIndex, zeroTol):
+    """neurokit2 eda_phasic.updateChol (explicitA=1 branch), copied verbatim."""
+    import scipy.linalg
+    flag = 0
+    newVec = R[:, newIndex]
+    if len(activeSet) == 0:
+        R_I0 = np.sqrt(np.sum(newVec ** 2))
+    else:
+        if len(np.array([R_I]).flatten()) == 1:
+            p = scipy.linalg.solve(np.array(R_I).reshape(-1, 1), np.matmul(R[:, activeSet].transpose(), R[:, newIndex]),
+                                   transposed=True, lower=False)
+        else:
+            p = scipy.linalg.solve(R_I, np.matmul(R[:, activeSet].transpose(), R[:, newIndex]),
+                                   transposed=True, lower=False)
+        q = np.sum(newVec ** 2) - np.sum(p ** 2)
+        if q <= zeroTol:
+            flag = 1
+            R_I0 = R_I.copy()
+        else:
+            if len(np.array([R_I]).shape) == 1:
+                R_I = np.array([R_I]).reshape(-1, 1)
+            R_I0 = np.zeros([np.array(R_I).shape[0] + 1, R_I.shape[1] + 1])
+            R_I0[0: R_I.shape[0], 0: R_I.shape[1]] = R_I
+            R_I0[0: R_I.shape[0], -1] = p
+            R_I0[-1, -1] = np.sqrt(q)
+    return R_I0, flag
+
+
+def _sparsEDA_worker(w):
+    return sparsEDA(w)
+
+
+def sparsEDA_windows(W, n_jobs=None):
+    """sparsEDA on every 1-min window (parallel). Returns tonic, phasic, driver arrays."""
+    from multiprocessing import Pool
+    with Pool(n_jobs or os.cpu_count()) as p:
+        res = p.map(_sparsEDA_worker, list(W), chunksize=16)
+    return tuple(np.stack([r[j] for r in res]) for j in range(3))
+
+
+# ---------------------------------------------------------------------------
+# Feature set of python_code/Statistical_Feature_Extraction.ipynb (sig2features + eda_feature_extraction)
+# ---------------------------------------------------------------------------
+ORIG_DESCRIPTIVES = ["mean", "max", "std", "skew", "norm1", "median", "min", "range",
+                     "mean_slope", "kurtosis", "sampen", "apen"]
+ORIG_PHASIC = ["phasic_peak_count", "phasic_peak_rate", "phasic_mean_amplitude", "phasic_max_amplitude",
+               "phasic_sum_amplitude", "phasic_mean_rise_time", "phasic_std_rise_time",
+               "phasic_mean_recovery_time", "phasic_mean_onset_time", "phasic_mean_offset_time",
+               "phasic_shape_symmetry", "eda_symp_power"]
+
+
+def orig_descriptives(x, name):
+    """The 12 row-wise descriptives of sig2features() for one window (pandas semantics: std ddof=1,
+    bias-corrected skew/kurtosis; NeuroKit2 sample/approximate entropy with default settings)."""
+    import neurokit2 as nk
+    s = pd.Series(np.asarray(x, float))
+    return {f"{name}_mean": s.mean(), f"{name}_max": s.max(), f"{name}_std": s.std(),
+            f"{name}_skew": s.skew(), f"{name}_norm1": s.abs().sum(), f"{name}_median": s.median(),
+            f"{name}_min": s.min(), f"{name}_range": s.max() - s.min(),
+            f"{name}_mean_slope": s.diff().mean(), f"{name}_kurtosis": s.kurtosis(),
+            f"{name}_sampen": nk.entropy_sample(s.values)[0], f"{name}_apen": nk.entropy_approximate(s.values)[0]}
+
+
+def orig_phasic_features(row, sampling_rate=FS):
+    """eda_feature_extraction() from Statistical_Feature_Extraction.ipynb, unchanged except that
+    np.trapz (removed in NumPy 2.x) falls back to np.trapezoid."""
+    import neurokit2 as nk
+    from scipy import signal
+    trapz = getattr(np, "trapz", None) or np.trapezoid
+    feature_names = ORIG_PHASIC
+    try:
+        try:
+            nperseg = min(len(row), 256)
+            freqs, psd = signal.welch(row, fs=sampling_rate, nperseg=nperseg)
+            symp_band = (freqs >= 0.045) & (freqs <= 0.25)
+            eda_symp_power = trapz(psd[symp_band], freqs[symp_band])
+        except Exception:
+            eda_symp_power = np.nan
+        signals, info = nk.eda_peaks(row, sampling_rate=sampling_rate)
+        peaks = info["SCR_Peaks"]; onsets = info["SCR_Onsets"]
+        recovery = info["SCR_Recovery"]; amplitudes = info["SCR_Amplitude"]
+        peak_count = len(peaks)
+        duration_minutes = (len(row) / sampling_rate) / 60
+        if peak_count == 0:
+            return dict(zip(feature_names, [0, 0.0] + [np.nan] * 8 + [np.nan, eda_symp_power]))
+        rise_times = (peaks - onsets) / sampling_rate
+        recovery_times = (recovery - peaks) / sampling_rate
+        with np.errstate(all="ignore"), warnings_off():
+            mean_rise = np.nanmean(rise_times)
+            mean_recovery = np.nanmean(recovery_times)
+            shape_symmetry = mean_rise / mean_recovery if mean_recovery > 0 else np.nan
+            onset_times = onsets / sampling_rate
+            offset_times = recovery / sampling_rate
+            peak_rate = peak_count / duration_minutes
+            vals = [peak_count, peak_rate, np.nanmean(amplitudes), np.nanmax(amplitudes), np.nansum(amplitudes),
+                    mean_rise, np.nanstd(rise_times), mean_recovery, np.nanmean(onset_times),
+                    np.nanmean(offset_times), shape_symmetry, eda_symp_power]
+        return dict(zip(feature_names, vals))
+    except Exception:
+        return dict(zip(feature_names, [np.nan] * len(feature_names)))
+
+
+def warnings_off():
+    import warnings
+    w = warnings.catch_warnings()
+    w.__enter__(); warnings.simplefilter("ignore")
+    class _C:
+        def __enter__(self): return self
+        def __exit__(self, *a): w.__exit__(*a)
+    return _C()
+
+
+def _orig_worker(args):
+    import warnings
+    warnings.simplefilter("ignore")
+    w, ton, ph, drv = args
+    f = orig_descriptives(w, "eda")
+    if ton is not None:
+        f.update(orig_descriptives(ph, "phasic"))
+        f.update(orig_phasic_features(ph))
+        f.update(orig_descriptives(ton, "tonic"))
+    if drv is not None:
+        f.update(orig_descriptives(drv, "driver"))
+    return f
+
+
+def original_feature_table(W, T=None, P=None, D=None, n_jobs=None, cache=None):
+    """48 features of Statistical_Feature_Extraction.ipynb for every window:
+    eda_* (12, raw window) + phasic_* (12 descriptives + 12 SCR/spectral) + tonic_* (12).
+    With T=P=None only the 12 eda_* features; with D given also 12 driver_* descriptives."""
+    from multiprocessing import Pool
+    if cache is not None and Path(cache).exists():
+        return pd.read_csv(cache)
+    n = len(W)
+    args = [(W[i], None if T is None else T[i], None if P is None else P[i], None if D is None else D[i])
+            for i in range(n)]
+    with Pool(n_jobs or os.cpu_count()) as p:
+        rows = p.map(_orig_worker, args, chunksize=16)
+    F = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
+    if cache is not None:
+        F.to_csv(cache, index=False)
+    return F
+
+
+def models_with_imputer():
+    """default_models() with median imputation (fitted inside each training fold), needed because the
+    SCR features are NaN for windows without detected peaks."""
+    from sklearn.pipeline import make_pipeline
+    from sklearn.impute import SimpleImputer
+    return {k: (lambda f=f: make_pipeline(SimpleImputer(strategy="median"), f())) for k, f in default_models().items()}
+
+
+def _gms_decomp_worker(args):
+    w, cfg = args
+    return gmsEDA_window(w, **cfg)
+
+
+def gmsEDA_decompose_windows(W, cfg, n_jobs=None):
+    """gmsEDA on every window for one configuration -> (driver, tonic, phasic) arrays."""
+    from multiprocessing import Pool
+    with Pool(n_jobs or os.cpu_count()) as p:
+        res = p.map(_gms_decomp_worker, [(w, cfg) for w in W], chunksize=32)
+    return tuple(np.stack([r[j] for r in res]) for j in range(3))
