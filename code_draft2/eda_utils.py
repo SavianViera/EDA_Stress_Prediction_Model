@@ -74,6 +74,133 @@ def make_windows(subjects, labels=(1, 2), stride_sec=10, win=WIN, fs=FS):
     return np.asarray(W), meta
 
 
+def reshape_windows(subjects, stride_sec=10, purity=1.0, labels=(1, 2), win_sec=WIN_SEC, fs=FS):
+    """1-min windows with the project's reshape_function (eda_proj.features, from
+    python_code/Statistical_Feature_Extraction.ipynb). It slides from the start of each recording with the
+    given stride and keeps windows whose majority label covers >= `purity` of the window.
+    Returns W (n, 240) and meta (subject, label, start), restricted to `labels`. reshape_function does not
+    return the window start, so `start` is recovered by matching each window to the recording."""
+    from eda_proj.features import reshape_function
+    wide = pd.concat([pd.DataFrame({f"{sid}_EDA": e, f"{sid}_Label": l}) for sid, (e, l) in subjects.items()], axis=1)
+    R = reshape_function(wide, name="EDA", window_size=win_sec, stride_size=stride_sec, hertz=fs,
+                         purity_threshold=purity)
+    W = R.filter(like="sample_").to_numpy(float)
+    win, stride = int(win_sec * fs), int(stride_sec * fs)
+    starts, pos = np.empty(len(R), int), {}
+    for k, sid in enumerate(R.subject_id.values):             # windows are in time order within each subject
+        eda = subjects[sid][0]
+        j = pos.get(sid, 0)
+        while not np.array_equal(eda[j:j + win], W[k]):
+            j += stride
+            assert j + win <= len(eda), "window not found in recording"
+        starts[k], pos[sid] = j, j + stride
+    keep = R.label.isin(labels).values
+    meta = pd.DataFrame({"subject": R.subject_id.values, "label": R.label.astype(int).values, "start": starts})[keep]
+    return W[keep], meta.reset_index(drop=True)
+
+
+WINDOWINGS = {
+    "reshape": "project reshape_function: slides from the start of each recording (default)",
+    "block": "slides from the start of each condition block (eda_utils.make_windows)",
+}
+LABEL_NAMES = {1: "baseline", 2: "stress", 3: "amusement", 4: "meditation"}
+
+
+def cache_for(windowing):
+    """Cache folder of one windowing scheme: cache/reshape/ or cache/block/."""
+    assert windowing in WINDOWINGS, windowing
+    d = CACHE / windowing
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def label_dir(windowing, label):
+    """Per-label cache folder, e.g. cache/reshape/label3/. Everything cached here is computed window by
+    window (windows, decompositions, features), so any set of labels is just a concatenation."""
+    d = cache_for(windowing) / f"label{int(label)}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def results_dir(windowing, labels, merge=None):
+    """Folder for results that depend on the classification task (grid screening, nested selection):
+    cache/<windowing>/results/labels_1-2/, labels_1-2-3/, labels_1-2-3_3to1/ (with label merging), ..."""
+    name = "labels_" + "-".join(str(int(l)) for l in labels)
+    if merge:
+        name += "_" + "_".join(f"{a}to{b}" for a, b in sorted(merge.items()))
+    d = cache_for(windowing) / "results" / name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def save_windows(windowing, W, meta, stride_sec=10):
+    """Save windows split by label into cache/<windowing>/label<k>/ (meta: subject, label, start)."""
+    for lab in sorted(meta.label.unique()):
+        m = (meta.label == lab).values
+        d = label_dir(windowing, lab)
+        np.savez_compressed(d / f"windows_stride{stride_sec}.npz", W=W[m])
+        meta.loc[m, ["subject", "label", "start"]].to_csv(d / f"windows_meta_stride{stride_sec}.csv", index=False)
+
+
+def _window_order(windowing, meta):
+    """Row order of the combined label sets = the order the windowing function itself produces:
+    reshape_function: subject (sorted as text), then time; make_windows: subject number, label, time."""
+    if windowing == "reshape":
+        keys = (meta.start.values, meta.subject.values)
+    else:
+        keys = (meta.start.values, meta.label.values, meta.subject.str[1:].astype(int).values)
+    return np.lexsort(keys)
+
+
+def _label_parts(windowing, labels, stride_sec=10):
+    parts = []
+    for lab in labels:
+        d = label_dir(windowing, lab)
+        f = d / f"windows_stride{stride_sec}.npz"
+        assert f.exists(), f"no windows for label {lab}: run notebook 01"
+        parts.append((d, np.load(f)["W"], pd.read_csv(d / f"windows_meta_stride{stride_sec}.csv")))
+    return parts
+
+
+def load_windows(windowing, labels=(1, 2), stride_sec=10):
+    """Windows and meta (subject, label, start) of the given labels, combined from the per-label caches."""
+    parts = _label_parts(windowing, labels, stride_sec)
+    W = np.concatenate([p[1] for p in parts])
+    meta = pd.concat([p[2] for p in parts], ignore_index=True)
+    o = _window_order(windowing, meta)
+    return W[o], meta.iloc[o].reset_index(drop=True)
+
+
+def per_label(windowing, labels, fn, stride_sec=10):
+    """Run fn(W_label, label_dir) -> DataFrame for each label (fn does its own caching in label_dir) and
+    combine the results in the same row order as load_windows."""
+    parts = _label_parts(windowing, labels, stride_sec)
+    X = pd.concat([fn(W_, d) for d, W_, _ in parts], ignore_index=True)
+    meta = pd.concat([p[2] for p in parts], ignore_index=True)
+    return X.iloc[_window_order(windowing, meta)].reset_index(drop=True)
+
+
+def read_table(path):
+    """Read a cached feature CSV with exact float round-trip (the default pandas parser can differ in the last
+    digit, which would make results depend on whether a table was just computed or read from the cache)."""
+    return pd.read_csv(path, float_precision="round_trip")
+
+
+def cached_table(path, compute):
+    """Read a cached feature CSV, or compute it (a DataFrame), save and read it back."""
+    path = Path(path)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        compute().to_csv(path, index=False)
+    return read_table(path)
+
+
+def task_labels(meta, merge=None):
+    """Class labels for the task: the WESAD labels, optionally merged (e.g. {3: 1} = amusement counted as
+    non-stress together with baseline)."""
+    return meta.label.replace(merge or {}).values
+
+
 def make_unlabeled_windows(subjects, stride_sec=60, win=WIN, fs=FS):
     """1-min windows over each subject's WHOLE recording, ignoring labels.
     Used only for label-free per-subject normalisation statistics."""
@@ -337,7 +464,7 @@ def gms_config_features(W, cfg, n_jobs=None, cache_dir=None):
     tag = f"c{cfg['num_of_chops']}_o{cfg['overlap']:g}_l{cfg['lam_scale']:g}_nn{cfg.get('force_nn', 0)}"
     f = cache_dir / f"gmsfeat_{tag}.csv"
     if f.exists():
-        return pd.read_csv(f)
+        return read_table(f)
     import glob
     for pack in sorted(glob.glob(str(cache_dir / "gms_grid_features*.npz"))):   # packed grid configurations
         z = np.load(pack, allow_pickle=False)
@@ -388,22 +515,47 @@ def nested_select_loso(candidates, y, groups, select_fn, final_fns, inner_splits
     return summ, pd.DataFrame(chosen, columns=["test_subject", "chosen", "inner_acc"])
 
 
-def pack_grid_features(cache_dir=None):
-    """Pack all cache/gmsfeat_*.csv into cache/gms_grid_features_part*.npz and return the config tags."""
+def pack_grid_features(cache_dir=None, remove_csv=True, n_parts=3):
+    """Pack gmsfeat_*.csv (one per gmsEDA configuration) together with any configurations already packed into
+    gms_grid_features_part*.npz (fewer, smaller files). The CSVs are removed afterwards unless remove_csv=False.
+    Returns the configuration tags."""
     import glob
     cache_dir = Path(cache_dir or CACHE)
     arrs, cols = {}, None
-    for f in sorted(glob.glob(str(cache_dir / "gmsfeat_*.csv"))):
-        F = pd.read_csv(f)
+    for pack in sorted(glob.glob(str(cache_dir / "gms_grid_features_part*.npz"))):
+        z = np.load(pack, allow_pickle=False)
+        cols = list(z["columns"])
+        arrs.update({k: z[k] for k in z.files if k.endswith("__X")})
+    csvs = sorted(glob.glob(str(cache_dir / "gmsfeat_*.csv")))
+    for f in csvs:
+        F = read_table(f)
         cols = list(F.columns) if cols is None else cols
         assert list(F.columns) == cols
         arrs[Path(f).stem[len("gmsfeat_"):] + "__X"] = F.values
     keys = sorted(arrs)                                # split in parts < 30 MB each
-    n_parts = 3
     for i in range(n_parts):
         part = {k: arrs[k] for k in keys[i::n_parts]}
         np.savez_compressed(cache_dir / f"gms_grid_features_part{i + 1}.npz", columns=np.array(cols), **part)
-    return [k[:-3] for k in arrs]
+    if remove_csv:
+        for f in csvs:
+            os.remove(f)
+    return [k[:-3] for k in keys]
+
+
+def gms_grid():
+    """The 112 gmsEDA configurations of notebook 02: the full 5 chops x 4 overlaps x 5 lam_scale grid (force_nn=0)
+    plus 12 refinements around the best region (more chops, overlap 0.95, lam 2, and force_nn=1)."""
+    import itertools, re
+    tags = [f"c{c}_o{o:g}_l{l:g}_nn0" for c, o, l in
+            itertools.product([2, 3, 5, 10, 20], [0, .5, .8, .9], [0.3, 0.5, 1, 3, 10])]
+    tags += ["c20_o0.8_l2_nn0", "c20_o0.95_l1_nn0", "c20_o0.95_l2_nn0", "c20_o0.9_l1_nn1", "c20_o0.9_l2_nn0",
+             "c30_o0.8_l1_nn0", "c30_o0.9_l1_nn0", "c30_o0.9_l2_nn0", "c40_o0.8_l1_nn0", "c40_o0.8_l2_nn0",
+             "c40_o0.9_l1_nn0", "c60_o0.8_l1_nn0"]
+    rows = []
+    for t in sorted(tags):
+        m = re.match(r"c(\d+)_o([\d.]+)_l([\d.]+)_nn(\d)", t)
+        rows.append(dict(tag=t, num_of_chops=int(m[1]), overlap=float(m[2]), lam_scale=float(m[3]), force_nn=int(m[4])))
+    return pd.DataFrame(rows)
 
 
 def grid_tags(cache_dir=None):
@@ -727,105 +879,50 @@ def sparsEDA_windows(W, n_jobs=None):
 
 
 # ---------------------------------------------------------------------------
-# Feature set of python_code/Statistical_Feature_Extraction.ipynb (sig2features + eda_feature_extraction)
+# Feature set of python_code/Statistical_Feature_Extraction.ipynb, used through
+# eda_proj.features.sig2features (moved there unchanged from that notebook)
 # ---------------------------------------------------------------------------
-ORIG_DESCRIPTIVES = ["mean", "max", "std", "skew", "norm1", "median", "min", "range",
-                     "mean_slope", "kurtosis", "sampen", "apen"]
-ORIG_PHASIC = ["phasic_peak_count", "phasic_peak_rate", "phasic_mean_amplitude", "phasic_max_amplitude",
-               "phasic_sum_amplitude", "phasic_mean_rise_time", "phasic_std_rise_time",
-               "phasic_mean_recovery_time", "phasic_mean_onset_time", "phasic_mean_offset_time",
-               "phasic_shape_symmetry", "eda_symp_power"]
+def windows_to_frame(A, meta=None):
+    """Windows (n, 240) -> the DataFrame layout reshape_function returns (subject_id, label, sample_0..)."""
+    df = pd.DataFrame(np.asarray(A, float), columns=[f"sample_{i}" for i in range(np.shape(A)[1])])
+    df.insert(0, "label", meta.label.values if meta is not None else 0)
+    df.insert(0, "subject_id", meta.subject.values if meta is not None else "")
+    return df
 
 
-def orig_descriptives(x, name):
-    """The 12 row-wise descriptives of sig2features() for one window (pandas semantics: std ddof=1,
-    bias-corrected skew/kurtosis; NeuroKit2 sample/approximate entropy with default settings)."""
-    import neurokit2 as nk
-    s = pd.Series(np.asarray(x, float))
-    return {f"{name}_mean": s.mean(), f"{name}_max": s.max(), f"{name}_std": s.std(),
-            f"{name}_skew": s.skew(), f"{name}_norm1": s.abs().sum(), f"{name}_median": s.median(),
-            f"{name}_min": s.min(), f"{name}_range": s.max() - s.min(),
-            f"{name}_mean_slope": s.diff().mean(), f"{name}_kurtosis": s.kurtosis(),
-            f"{name}_sampen": nk.entropy_sample(s.values)[0], f"{name}_apen": nk.entropy_approximate(s.values)[0]}
-
-
-def orig_phasic_features(row, sampling_rate=FS):
-    """eda_feature_extraction() from Statistical_Feature_Extraction.ipynb, unchanged except that
-    np.trapz (removed in NumPy 2.x) falls back to np.trapezoid."""
-    import neurokit2 as nk
-    from scipy import signal
-    trapz = getattr(np, "trapz", None) or np.trapezoid
-    feature_names = ORIG_PHASIC
-    try:
-        try:
-            nperseg = min(len(row), 256)
-            freqs, psd = signal.welch(row, fs=sampling_rate, nperseg=nperseg)
-            symp_band = (freqs >= 0.045) & (freqs <= 0.25)
-            eda_symp_power = trapz(psd[symp_band], freqs[symp_band])
-        except Exception:
-            eda_symp_power = np.nan
-        signals, info = nk.eda_peaks(row, sampling_rate=sampling_rate)
-        peaks = info["SCR_Peaks"]; onsets = info["SCR_Onsets"]
-        recovery = info["SCR_Recovery"]; amplitudes = info["SCR_Amplitude"]
-        peak_count = len(peaks)
-        duration_minutes = (len(row) / sampling_rate) / 60
-        if peak_count == 0:
-            return dict(zip(feature_names, [0, 0.0] + [np.nan] * 8 + [np.nan, eda_symp_power]))
-        rise_times = (peaks - onsets) / sampling_rate
-        recovery_times = (recovery - peaks) / sampling_rate
-        with np.errstate(all="ignore"), warnings_off():
-            mean_rise = np.nanmean(rise_times)
-            mean_recovery = np.nanmean(recovery_times)
-            shape_symmetry = mean_rise / mean_recovery if mean_recovery > 0 else np.nan
-            onset_times = onsets / sampling_rate
-            offset_times = recovery / sampling_rate
-            peak_rate = peak_count / duration_minutes
-            vals = [peak_count, peak_rate, np.nanmean(amplitudes), np.nanmax(amplitudes), np.nansum(amplitudes),
-                    mean_rise, np.nanstd(rise_times), mean_recovery, np.nanmean(onset_times),
-                    np.nanmean(offset_times), shape_symmetry, eda_symp_power]
-        return dict(zip(feature_names, vals))
-    except Exception:
-        return dict(zip(feature_names, [np.nan] * len(feature_names)))
-
-
-def warnings_off():
-    import warnings
-    w = warnings.catch_warnings()
-    w.__enter__(); warnings.simplefilter("ignore")
-    class _C:
-        def __enter__(self): return self
-        def __exit__(self, *a): w.__exit__(*a)
-    return _C()
-
-
-def _orig_worker(args):
+def _sig2features_worker(args):
     import warnings
     warnings.simplefilter("ignore")
-    w, ton, ph, drv = args
-    f = orig_descriptives(w, "eda")
-    if ton is not None:
-        f.update(orig_descriptives(ph, "phasic"))
-        f.update(orig_phasic_features(ph))
-        f.update(orig_descriptives(ton, "tonic"))
-    if drv is not None:
-        f.update(orig_descriptives(drv, "driver"))
-    return f
+    from eda_proj.features import sig2features
+    A, name = args
+    return sig2features(windows_to_frame(A), name).drop(columns=["label", "subject_id"])
+
+
+def sig2features_parallel(A, name, n_jobs=None, chunk=100):
+    """eda_proj.features.sig2features(windows, name), run on chunks of rows in parallel."""
+    from multiprocessing import Pool
+    A = np.asarray(A, float)
+    parts = [(A[i:i + chunk], name) for i in range(0, len(A), chunk)]
+    with Pool(n_jobs or os.cpu_count()) as p:
+        out = p.map(_sig2features_worker, parts)
+    return pd.concat(out, ignore_index=True)
 
 
 def original_feature_table(W, T=None, P=None, D=None, n_jobs=None, cache=None):
-    """48 features of Statistical_Feature_Extraction.ipynb for every window:
-    eda_* (12, raw window) + phasic_* (12 descriptives + 12 SCR/spectral) + tonic_* (12).
-    With T=P=None only the 12 eda_* features; with D given also 12 driver_* descriptives."""
-    from multiprocessing import Pool
+    """Features of Statistical_Feature_Extraction.ipynb, computed with its own sig2features():
+    eda_* (12, raw window) + phasic_* (12 descriptives + 12 SCR/spectral via eda_feature_extraction)
+    + tonic_* (12) -> the 48 columns of feature_dataframe.csv. With T=P=None only the 12 eda_* columns;
+    with D given also 12 driver_* descriptives (an extension, not in the original notebook)."""
     if cache is not None and Path(cache).exists():
-        return pd.read_csv(cache)
-    n = len(W)
-    args = [(W[i], None if T is None else T[i], None if P is None else P[i], None if D is None else D[i])
-            for i in range(n)]
-    with Pool(n_jobs or os.cpu_count()) as p:
-        rows = p.map(_orig_worker, args, chunksize=16)
-    F = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
+        return read_table(cache)
+    parts = [sig2features_parallel(W, "eda", n_jobs)]
+    if P is not None:
+        parts += [sig2features_parallel(P, "phasic", n_jobs), sig2features_parallel(T, "tonic", n_jobs)]
+    if D is not None:
+        parts.append(sig2features_parallel(D, "driver", n_jobs))
+    F = pd.concat(parts, axis=1).replace([np.inf, -np.inf], np.nan)
     if cache is not None:
+        Path(cache).parent.mkdir(parents=True, exist_ok=True)
         F.to_csv(cache, index=False)
     return F
 
@@ -849,3 +946,105 @@ def gmsEDA_decompose_windows(W, cfg, n_jobs=None):
     with Pool(n_jobs or os.cpu_count()) as p:
         res = p.map(_gms_decomp_worker, [(w, cfg) for w in W], chunksize=32)
     return tuple(np.stack([r[j] for r in res]) for j in range(3))
+
+
+# ---------------------------------------------------------------------------
+# Per-label cached feature tables (used by notebooks 02-05)
+# ---------------------------------------------------------------------------
+def nk_tonic_phasic(W, method):
+    """NeuroKit2 eda_phasic (real neurokit2 if installed, otherwise the identical copy) on every window."""
+    try:
+        import neurokit2 as nk
+        out = [nk.eda_phasic(w, sampling_rate=FS, method=method).values.T for w in W]
+    except ImportError:
+        out = [np.vstack(nk_eda_phasic(w, method=method)) for w in W]
+    T, P = map(np.array, zip(*out))
+    return T, P
+
+
+def decomp_feature_table(W, method):
+    """The gms_signed_features of notebooks 02-03 applied to another decomposition of each window:
+    method = 'nk_highpass', 'nk_median' (NeuroKit2 smoothmedian; no driver, so driver features are dropped)
+    or 'sparsEDA' (with its sparse driver)."""
+    if method == "sparsEDA":
+        T, P, D = sparsEDA_windows(W)
+        rows = [gms_signed_features(w, d, t, p, prefix="sparsEDA") for w, t, p, d in zip(W, T, P, D)]
+    else:
+        T, P = nk_tonic_phasic(W, {"nk_highpass": "highpass", "nk_median": "smoothmedian"}[method])
+        rows = [{k: v for k, v in gms_signed_features(w, np.zeros_like(w), t, p, prefix=method).items() if "drv" not in k}
+                for w, t, p in zip(W, T, P)]
+    return pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
+def own_features(windowing, labels, kind):
+    """Feature tables of notebooks 02-03 for the given labels, cached per label in cache/<windowing>/label<k>/:
+    kind = 'raw' (33 + 14 rel_ columns), 'med' (running-median control), 'nk_highpass', 'nk_median', 'sparsEDA',
+    or a gmsEDA configuration tag such as 'c20_o0.9_l1_nn0'."""
+    import re
+
+    def fn(W_, d):
+        if kind == "raw":
+            return cached_table(d / "rawfeat_abs.csv", lambda: pd.DataFrame([raw_features_abs(w) for w in W_])
+                                .replace([np.inf, -np.inf], np.nan).fillna(0))
+        if kind == "med":
+            def med():
+                rows = []
+                for w in W_:
+                    ton, ph = smooth_decompose_window(w)
+                    rows.append(gms_signed_features(w, np.zeros_like(w), ton, ph, prefix="med"))
+                return pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan).fillna(0)
+            return cached_table(d / "medfeat_abs.csv", med)
+        if kind in ("nk_highpass", "nk_median", "sparsEDA"):
+            return cached_table(d / f"decompfeat_{kind}.csv", lambda: decomp_feature_table(W_, kind))
+        m = re.fullmatch(r"c(\d+)_o([\d.]+)_l([\d.]+)_nn(\d)", kind)
+        assert m, kind
+        cfg = dict(num_of_chops=int(m[1]), overlap=float(m[2]), lam_scale=float(m[3]), force_nn=int(m[4]))
+        return gms_config_features(W_, cfg, cache_dir=d)
+    return per_label(windowing, labels, fn)
+
+
+def orig_features(windowing, labels, kind, n_jobs=None):
+    """Original feature set (Statistical_Feature_Extraction.ipynb, via eda_proj.features.sig2features) for the
+    given labels, cached per label in cache/<windowing>/label<k>/origfeat/<kind>.csv. kind = 'raw',
+    'nk_highpass', 'nk_smoothmedian', 'sparsEDA', 'sparsEDA_drv', 'gms_c20_o0.9_l1' or 'gms_c20_o0.9_l1_drv'
+    (driver descriptives added). A decomposition is computed only when its table is missing; the tables with and
+    without driver are then written together."""
+    import re
+
+    def fn(W_, d):
+        fd = d / "origfeat"
+        f = fd / f"{kind}.csv"
+        if f.exists():
+            return read_table(f)
+        base = kind[:-4] if kind.endswith("_drv") else kind
+        if base == "raw":
+            return original_feature_table(W_, n_jobs=n_jobs, cache=f)
+        if base.startswith("nk_"):
+            T, P = nk_tonic_phasic(W_, base[3:])
+            return original_feature_table(W_, T, P, n_jobs=n_jobs, cache=f)
+        if base == "sparsEDA":
+            T, P, D = sparsEDA_windows(W_)
+        else:
+            m = re.fullmatch(r"gms_c(\d+)_o([\d.]+)_l([\d.]+)", base)
+            assert m, kind
+            D, T, P = gmsEDA_decompose_windows(W_, dict(num_of_chops=int(m[1]), overlap=float(m[2]),
+                                                        lam_scale=float(m[3]), force_nn=0))
+        original_feature_table(W_, T, P, n_jobs=n_jobs, cache=fd / f"{base}.csv")
+        original_feature_table(W_, T, P, D, n_jobs=n_jobs, cache=fd / f"{base}_drv.csv")
+        return read_table(f)
+    return per_label(windowing, labels, fn)
+
+
+def compare_feature_sets_cached(sets, y, groups, cache_prefix, models=None, baseline="raw"):
+    """compare_feature_sets with its two result tables cached as <cache_prefix>_res.csv / _paired.csv
+    (recomputed when the feature-set names differ)."""
+    cache_prefix = Path(cache_prefix)
+    fr, fp = Path(f"{cache_prefix}_res.csv"), Path(f"{cache_prefix}_paired.csv")
+    if fr.exists() and fp.exists():
+        res, ptab = pd.read_csv(fr), pd.read_csv(fp)
+        if list(res.features.unique()) == list(sets):
+            return res, ptab
+    res, ptab = compare_feature_sets(sets, y, groups, models=models, baseline=baseline)
+    fr.parent.mkdir(parents=True, exist_ok=True)
+    res.to_csv(fr, index=False); ptab.to_csv(fp, index=False)
+    return res, ptab
